@@ -196,4 +196,4 @@ class ByteStreamer:
         while True:
             await asyncio.sleep(self.clean_timer)
             self.cached_file_ids.clear()
-            logger.debug("Cleaned the cache")
+            logger.debug("Cleaned the cache") 
