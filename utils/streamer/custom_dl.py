@@ -31,43 +31,48 @@ class ByteStreamer:
             raise Exception("FileNotFound")
         self.cached_file_ids[message_id] = file_id
         return file_id
+    from pyrogram.errors import RPCError, AuthKeyUnregistered
+
     async def generate_media_session(self, client: Client, file_id: FileId) -> Session:
-        """
-        Generates a proper media session for the DC that contains the media file.
-        Ensures cross-DC export/import auth works and reuses existing sessions.
-        """
         dc_id = file_id.dc_id
-        media_session = client.media_sessions.get(dc_id)
-
-        if media_session:
-            logger.debug(f"Using cached media session for DC {dc_id}")
-            return media_session
-
         main_dc = await client.storage.dc_id()
         test_mode = await client.storage.test_mode()
-
-        # ✅ Use Pyrogram's internal DC addresses (dc_options)
         dc_options = await client.storage.dc_options()
+
         dc_option = next((d for d in dc_options if d.id == dc_id and d.ip_address), None)
         if not dc_option:
             raise Exception(f"No DC option found for DC {dc_id}")
 
-        # ✅ Build a proper new media session bound to that DC
-        auth_key = None
+    # 🧠 check cache
+        media_session = client.media_sessions.get(dc_id)
+
+    # ✅ Validate cached session before reuse
+        if media_session:
+            try:
+            # lightweight ping — will fail if session dead or unauthorized
+                await media_session.invoke(raw.functions.help.GetConfig())
+                logger.debug(f"Reusing valid media session for DC {dc_id}")
+                return media_session
+            except (AuthKeyUnregistered, RPCError, ConnectionError, TimeoutError):
+                logger.warning(f"Cached media session for DC {dc_id} invalid — regenerating")
+                try:
+                    await media_session.stop()
+                except Exception:
+                    pass
+                client.media_sessions.pop(dc_id, None)
+
+    # ✅ build new one
         if dc_id == main_dc:
             auth_key = await client.storage.auth_key()
+            media_session = Session(client, dc_id, auth_key, test_mode, is_media=True)
+            media_session.dc = dc_option
+            await media_session.start()
+            logger.debug(f"Created fresh session for main DC {dc_id}")
         else:
-            # create new Auth and import exported authorization from main DC
-            exported_auth = await client.invoke(
-                raw.functions.auth.ExportAuthorization(dc_id=dc_id)
-            )
+            exported_auth = await client.invoke(raw.functions.auth.ExportAuthorization(dc_id=dc_id))
             auth = Auth(client, dc_id, test_mode)
-            await auth.create()  # generates a new key for that DC
-            media_session = Session(
-                client, dc_id, auth, test_mode, is_media=True
-            )
-
-            # ✅ manually override endpoint to correct IP/port
+            await auth.create()
+            media_session = Session(client, dc_id, auth, test_mode, is_media=True)
             media_session.dc = dc_option
             await media_session.start()
 
@@ -82,19 +87,11 @@ class ByteStreamer:
                 await media_session.stop()
                 raise
             else:
-                client.media_sessions[dc_id] = media_session
-                logger.debug(f"Imported auth and created session for DC {dc_id}")
-                return media_session
+                logger.debug(f"Imported auth and created new session for DC {dc_id}")
 
-        # fallback for main DC
-        media_session = Session(
-            client, dc_id, auth_key, test_mode, is_media=True
-        )
-        media_session.dc = dc_option
-        await media_session.start()
         client.media_sessions[dc_id] = media_session
-        logger.debug(f"Created media session for DC {dc_id} (main DC)")
         return media_session
+    
         
 
 
