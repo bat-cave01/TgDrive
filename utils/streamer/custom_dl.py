@@ -31,66 +31,72 @@ class ByteStreamer:
             raise Exception("FileNotFound")
         self.cached_file_ids[message_id] = file_id
         return file_id
-
     async def generate_media_session(self, client: Client, file_id: FileId) -> Session:
         """
-        Generates the media session for the DC that contains the media file.
-        Fully supports bot tokens (dc4-safe).
+        Generates a proper media session for the DC that contains the media file.
+        Ensures cross-DC export/import auth works and reuses existing sessions.
         """
-        media_session = client.media_sessions.get(file_id.dc_id)
+        dc_id = file_id.dc_id
+        media_session = client.media_sessions.get(dc_id)
+
         if media_session:
-            logger.debug(f"Using cached media session for DC {file_id.dc_id}")
+            logger.debug(f"Using cached media session for DC {dc_id}")
             return media_session
 
-        current_dc = await client.storage.dc_id()
+        main_dc = await client.storage.dc_id()
         test_mode = await client.storage.test_mode()
 
-        # ✅ DC-specific session creation
-        if file_id.dc_id != current_dc:
-            logger.debug(f"Creating new session for DC {file_id.dc_id} (bot mode)")
+        # ✅ Use Pyrogram's internal DC addresses (dc_options)
+        dc_options = await client.storage.dc_options()
+        dc_option = next((d for d in dc_options if d.id == dc_id and d.ip_address), None)
+        if not dc_option:
+            raise Exception(f"No DC option found for DC {dc_id}")
 
-            auth_key = await Auth(client, file_id.dc_id, test_mode).create()
-            media_session = Session(client, file_id.dc_id, auth_key, test_mode, is_media=True)
-            await media_session.start()
-
-            # 🔁 DC4 safe import with retries
-            for i in range(6):
-                try:
-                    exported = await client.invoke(
-                        raw.functions.auth.ExportAuthorization(dc_id=file_id.dc_id)
-                    )
-                    await media_session.invoke(
-                        raw.functions.auth.ImportAuthorization(
-                            id=exported.id,
-                            bytes=exported.bytes,
-                        )
-                    )
-                    logger.debug(f"Authorization imported to DC {file_id.dc_id}")
-                    break
-                except AuthBytesInvalid:
-                    logger.warning(
-                        f"[Attempt {i+1}/6] Invalid auth bytes for DC {file_id.dc_id}, retrying..."
-                    )
-                    continue
-            else:
-                await media_session.stop()
-                raise AuthBytesInvalid(f"Failed import for DC {file_id.dc_id}")
-
+        # ✅ Build a proper new media session bound to that DC
+        auth_key = None
+        if dc_id == main_dc:
+            auth_key = await client.storage.auth_key()
         else:
-            # ✅ Same DC (no export/import needed)
-            logger.debug(f"Using home DC {file_id.dc_id} for bot media session.")
-            media_session = Session(
-                client,
-                file_id.dc_id,
-                await client.storage.auth_key(),
-                test_mode,
-                is_media=True,
+            # create new Auth and import exported authorization from main DC
+            exported_auth = await client.invoke(
+                raw.functions.auth.ExportAuthorization(dc_id=dc_id)
             )
+            auth = Auth(client, dc_id, test_mode)
+            await auth.create()  # generates a new key for that DC
+            media_session = Session(
+                client, dc_id, auth, test_mode, is_media=True
+            )
+
+            # ✅ manually override endpoint to correct IP/port
+            media_session.dc = dc_option
             await media_session.start()
 
-        client.media_sessions[file_id.dc_id] = media_session
-        logger.debug(f"Media session ready for DC {file_id.dc_id}")
+            try:
+                await media_session.invoke(
+                    raw.functions.auth.ImportAuthorization(
+                        id=exported_auth.id,
+                        bytes=exported_auth.bytes
+                    )
+                )
+            except AuthBytesInvalid:
+                await media_session.stop()
+                raise
+            else:
+                client.media_sessions[dc_id] = media_session
+                logger.debug(f"Imported auth and created session for DC {dc_id}")
+                return media_session
+
+        # fallback for main DC
+        media_session = Session(
+            client, dc_id, auth_key, test_mode, is_media=True
+        )
+        media_session.dc = dc_option
+        await media_session.start()
+        client.media_sessions[dc_id] = media_session
+        logger.debug(f"Created media session for DC {dc_id} (main DC)")
         return media_session
+        
+
 
     @staticmethod
     async def get_location(
