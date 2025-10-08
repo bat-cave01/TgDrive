@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TG Drive</title>
+    <link rel="stylesheet" href="static/home.css" />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap"
+        rel="stylesheet" />
+
+    <style>
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    position: relative;
+}
+
+/* Delete icon button */
+.delete-icon-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 5px;
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    z-index: 10;
+}
+
+.delete-icon-btn img {
+    width: 24px;
+    height: 24px;
+}
+
+.delete-icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Shorten/truncate file name */
+.search-bar input {
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 0.9rem;
+    white-space: nowrap;       /* keep on single line */
+    overflow: hidden;          /* hide overflow text */
+    text-overflow: ellipsis;   /* show ... for long text */
+}
+    .directory table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.directory table th,
+.directory table td {
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 0.9rem;
+    white-space: nowrap;       /* keep on single line */
+    overflow: hidden;          /* hide overflow */
+    text-overflow: ellipsis;   /* show ... for long text */
+    vertical-align: middle;
+}
+
+.directory table th {
+    font-weight: 500;
+    color: #444746;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.directory table td {
+    font-weight: 400;
+    color: #444746;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+/* Responsive adjustments */
+@media screen and (max-width: 600px) {
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .delete-icon-btn {
+        position: absolute;
+        top: 5px; /* place above search bar */
+        right: 10px;
+        transform: none;
+    }
+
+    .search-bar {
+        width: 100%;
+        margin-top: 25px; /* space for delete icon */
+    }
+     .directory table {
+        width: 100%;
+    }
+
+    .directory table th,
+    .directory table td {
+        font-size: 0.8rem;
+        padding: 6px 8px;
+    }
+
+}
+</style>
+
+</head>
+
+<body>
+    <div class="container">
+        <!-- Sidebar Start -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <img src="https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png" />
+                <span>Batman's Drive</span>
+            </div>
+
+            <button id="new-button" class="new-button">
+                <img src="static/assets/plus-icon.svg" />New
+            </button>
+
+            <div id="new-upload" class="new-upload">
+                <input id="new-upload-focus" type="text" style="height:0;width:0;border:none;position:absolute" readonly />
+                <div id="new-folder-btn"><img src="static/assets/folder-icon.svg" />New Folder</div>
+                <hr />
+                <div id="file-upload-btn"><img src="static/assets/upload-icon.svg" />File Upload</div>
+                <input type="file" id="fileInput" style="height:0;width:0;border:none;position:absolute" />
+                <hr />
+                <div id="url-upload-btn"><img src="static/assets/link-icon.svg" />URL Upload</div>
+            </div>
+
+            <div class="sidebar-menu">
+                <a class="selected-item" href="/?path=/"><img src="static/assets/home-icon.svg" />Home</a>
+                <a class="unselected-item" href="/?path=/trash"><img src="static/assets/trash-icon.svg" />Trash</a>
+            </div>
+        </div>
+        <!-- Sidebar End -->
+
+        <div id="bg-blur" class="bg-blur"></div>
+
+        <!-- Create New Folder Start -->
+        <div id="create-new-folder" class="create-new-folder">
+            <span>New Folder</span>
+            <input type="text" id="new-folder-name" placeholder="Enter Folder Name" autocomplete="off" />
+            <div>
+                <button id="new-folder-cancel">Cancel</button>
+                <button id="new-folder-create">Create</button>
+            </div>
+        </div>
+        <!-- Create New Folder End -->
+
+        <!-- File / Folder Rename Start -->
+        <div id="rename-file-folder" class="create-new-folder">
+            <span>Edit File/Folder Name</span>
+            <input type="text" id="rename-name" placeholder="Enter File/Folder Name" autocomplete="off" />
+            <div>
+                <button id="rename-cancel">Cancel</button>
+                <button id="rename-create">Rename</button>
+            </div>
+        </div>
+        <!-- File / Folder Rename End -->
+
+        <!-- Remote Upload Start -->
+        <div id="new-url-upload" class="create-new-folder">
+            <span>URL Upload</span>
+            <input type="text" id="remote-url" placeholder="Enter Direct Download Link" autocomplete="off" />
+            <div id="single-threaded-div">
+                <input type="checkbox" name="single-threaded-toggle" id="single-threaded-toggle">
+                <label for="single-threaded-toggle">Single Threaded</label>
+                <a href="#"><img src="static/assets/info-icon-small.svg" alt="Info"></a>
+            </div>
+            <div>
+                <button id="remote-cancel">Cancel</button>
+                <button id="remote-start">Upload</button>
+            </div>
+        </div>
+        <!-- Remote Upload End -->
+
+        <!-- Get Password Start -->
+        <div id="get-password" class="create-new-folder">
+            <span>Admin Login</span>
+            <input type="text" id="auth-pass" placeholder="Enter Password" autocomplete="off" />
+            <div>
+                <button id="pass-login">Login</button>
+            </div>
+        </div>
+        <!-- Get Password End -->
+
+        <!-- File Uploader Start -->
+        <div id="file-uploader" class="file-uploader">
+            <span class="upload-head">🚀 Uploading File...</span>
+            <span id="upload-filename" class="upload-info">Filename :</span>
+            <span id="upload-filesize" class="upload-info">Filesize :</span>
+            <span id="upload-status" class="upload-info">Status :</span>
+            <span id="upload-percent" class="upload-info">Progress :</span>
+            <div class="progress">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <div class="btn-div">
+                <button id="cancel-file-upload">Cancel Upload</button>
+            </div>
+        </div>
+        <!-- File Uploader End -->
+
+        <!-- Main Content Start -->
+        <div class="main-content">
+            <div class="header">
+                <div class="search-bar">
+                    <img src="static/assets/search-icon.svg" />
+                    <form id="search-form">
+                        <input id="file-search" type="text" placeholder="Search in Drive" autocomplete="off" />
+                    </form>
+                </div>
+
+                <!-- Delete Selected Icon Button -->
+                <button id="delete-selected-btn" class="delete-icon-btn" title="Delete Selected" disabled>
+                    <img src="static/assets/trash-icon.svg" alt="Delete" />
+                </button>
+            </div>
+
+            <div class="directory">
+                <table>
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="select-all" /></th>
+                            <th>Name</th>
+                            <th>File Size</th>
+                            <th>More</th>
+                        </tr>
+                    </thead>
+                    <tbody id="directory-data"></tbody>
+                </table>
+            </div>
+        </div>
+        <!-- Main Content End -->
+    </div>
+
+    <script src="static/js/extra.js"></script>
+    <script src="static/js/apiHandler.js"></script>
+    <script src="static/js/sidebar.js"></script>
+    <script src="static/js/fileClickHandler.js"></script>
+    <script src="static/js/main.js"></script>
+
+    <script>
+        // Utility: get password from localStorage
+        function getPassword() { return localStorage.getItem('password'); }
+
+        // Select All Checkbox
+        const selectAllCheckbox = document.getElementById('select-all');
+        const deleteSelectedBtn = document.getElementById('delete-selected-btn');
+
+        selectAllCheckbox?.addEventListener('change', () => {
+            const checkboxes = document.querySelectorAll('.select-item');
+            checkboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+            updateRowSelection();
+            updateDeleteBtn();
+        });
+
+        function updateRowSelection() {
+            document.querySelectorAll('.select-item').forEach(cb => {
+                const row = cb.closest('tr');
+                if (cb.checked) row.classList.add('selected');
+                else row.classList.remove('selected');
+            });
+        }
+
+        function updateDeleteBtn() {
+            const anySelected = document.querySelectorAll('.select-item:checked').length > 0;
+            deleteSelectedBtn.disabled = !anySelected;
+        }
+
+        document.addEventListener('change', () => {
+            updateRowSelection();
+            updateDeleteBtn();
+        });
+
+        deleteSelectedBtn?.addEventListener('click', async () => {
+            const selected = Array.from(document.querySelectorAll('.select-item:checked'))
+                .map(cb => cb.dataset.id);
+
+            if (selected.length === 0) { alert("No files/folders selected!"); return; }
+            if (!confirm(`Are you sure you want to delete ${selected.length} item(s)?`)) return;
+
+            for (const id of selected) {
+                try {
+                    await fetch('/api/deleteFileFolder', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: getPassword(), path: id })
+                    });
+                } catch (e) { console.error(e); }
+            }
+
+            alert('Selected items deleted successfully!');
+            getCurrentDirectory(); // reload
+            selectAllCheckbox.checked = false;
+        });
+    </script>
+</body>
+
+</html>
