@@ -12,77 +12,84 @@ logger = Logger(__name__)
 
 class ByteStreamer:
     def __init__(self, client: Client):
+        """Handles Telegram file streaming via Pyrogram (bot token compatible)."""
         self.clean_timer = 30 * 60
         self.client: Client = client
         self.cached_file_ids: Dict[int, FileId] = {}
         asyncio.create_task(self.clean_cache())
 
     async def get_file_properties(self, channel, message_id: int) -> FileId:
+        """Fetch and cache FileId from a Telegram message."""
         if message_id not in self.cached_file_ids:
             await self.generate_file_properties(channel, message_id)
         return self.cached_file_ids[message_id]
 
     async def generate_file_properties(self, channel, message_id: int) -> FileId:
+        """Generates FileId and stores it in cache."""
         file_id = await get_file_ids(self.client, channel, message_id)
         if not file_id:
             raise Exception("FileNotFound")
         self.cached_file_ids[message_id] = file_id
-        return self.cached_file_ids[message_id]
+        return file_id
 
     async def generate_media_session(self, client: Client, file_id: FileId) -> Session:
         """
         Generates the media session for the DC that contains the media file.
-        This is required for getting the bytes from Telegram servers.
+        Fully supports bot tokens (dc4-safe).
         """
+        media_session = client.media_sessions.get(file_id.dc_id)
+        if media_session:
+            logger.debug(f"Using cached media session for DC {file_id.dc_id}")
+            return media_session
 
-        media_session = client.media_sessions.get(file_id.dc_id, None)
+        current_dc = await client.storage.dc_id()
+        test_mode = await client.storage.test_mode()
 
-        if media_session is None:
-            if file_id.dc_id != await client.storage.dc_id():
-                media_session = Session(
-                    client,
-                    file_id.dc_id,
-                    await Auth(
-                        client, file_id.dc_id, await client.storage.test_mode()
-                    ).create(),
-                    await client.storage.test_mode(),
-                    is_media=True,
-                )
-                await media_session.start()
+        # ✅ DC-specific session creation
+        if file_id.dc_id != current_dc:
+            logger.debug(f"Creating new session for DC {file_id.dc_id} (bot mode)")
 
-                for _ in range(6):
-                    exported_auth = await client.invoke(
+            auth_key = await Auth(client, file_id.dc_id, test_mode).create()
+            media_session = Session(client, file_id.dc_id, auth_key, test_mode, is_media=True)
+            await media_session.start()
+
+            # 🔁 DC4 safe import with retries
+            for i in range(6):
+                try:
+                    exported = await client.invoke(
                         raw.functions.auth.ExportAuthorization(dc_id=file_id.dc_id)
                     )
-
-                    try:
-                        await media_session.invoke(
-                            raw.functions.auth.ImportAuthorization(
-                                id=exported_auth.id, bytes=exported_auth.bytes
-                            )
+                    await media_session.invoke(
+                        raw.functions.auth.ImportAuthorization(
+                            id=exported.id,
+                            bytes=exported.bytes,
                         )
-                        break
-                    except AuthBytesInvalid:
-                        logger.debug(
-                            f"Invalid authorization bytes for DC {file_id.dc_id}"
-                        )
-                        continue
-                else:
-                    await media_session.stop()
-                    raise AuthBytesInvalid
+                    )
+                    logger.debug(f"Authorization imported to DC {file_id.dc_id}")
+                    break
+                except AuthBytesInvalid:
+                    logger.warning(
+                        f"[Attempt {i+1}/6] Invalid auth bytes for DC {file_id.dc_id}, retrying..."
+                    )
+                    continue
             else:
-                media_session = Session(
-                    client,
-                    file_id.dc_id,
-                    await client.storage.auth_key(),
-                    await client.storage.test_mode(),
-                    is_media=True,
-                )
-                await media_session.start()
-            logger.debug(f"Created media session for DC {file_id.dc_id}")
-            client.media_sessions[file_id.dc_id] = media_session
+                await media_session.stop()
+                raise AuthBytesInvalid(f"Failed import for DC {file_id.dc_id}")
+
         else:
-            logger.debug(f"Using cached media session for DC {file_id.dc_id}")
+            # ✅ Same DC (no export/import needed)
+            logger.debug(f"Using home DC {file_id.dc_id} for bot media session.")
+            media_session = Session(
+                client,
+                file_id.dc_id,
+                await client.storage.auth_key(),
+                test_mode,
+                is_media=True,
+            )
+            await media_session.start()
+
+        client.media_sessions[file_id.dc_id] = media_session
+        logger.debug(f"Media session ready for DC {file_id.dc_id}")
         return media_session
 
     @staticmethod
@@ -93,15 +100,14 @@ class ByteStreamer:
         raw.types.InputDocumentFileLocation,
         raw.types.InputPeerPhotoFileLocation,
     ]:
-        """
-        Returns the file location for the media file.
-        """
+        """Returns proper InputFileLocation for Telegram media."""
         file_type = file_id.file_type
 
         if file_type == FileType.CHAT_PHOTO:
             if file_id.chat_id > 0:
                 peer = raw.types.InputPeerUser(
-                    user_id=file_id.chat_id, access_hash=file_id.chat_access_hash
+                    user_id=file_id.chat_id,
+                    access_hash=file_id.chat_access_hash,
                 )
             else:
                 if file_id.chat_access_hash == 0:
@@ -112,27 +118,27 @@ class ByteStreamer:
                         access_hash=file_id.chat_access_hash,
                     )
 
-            location = raw.types.InputPeerPhotoFileLocation(
+            return raw.types.InputPeerPhotoFileLocation(
                 peer=peer,
                 volume_id=file_id.volume_id,
                 local_id=file_id.local_id,
                 big=file_id.thumbnail_source == ThumbnailSource.CHAT_PHOTO_BIG,
             )
+
         elif file_type == FileType.PHOTO:
-            location = raw.types.InputPhotoFileLocation(
+            return raw.types.InputPhotoFileLocation(
                 id=file_id.media_id,
                 access_hash=file_id.access_hash,
                 file_reference=file_id.file_reference,
                 thumb_size=file_id.thumbnail_size,
             )
-        else:
-            location = raw.types.InputDocumentFileLocation(
-                id=file_id.media_id,
-                access_hash=file_id.access_hash,
-                file_reference=file_id.file_reference,
-                thumb_size=file_id.thumbnail_size,
-            )
-        return location
+
+        return raw.types.InputDocumentFileLocation(
+            id=file_id.media_id,
+            access_hash=file_id.access_hash,
+            file_reference=file_id.file_reference,
+            thumb_size=file_id.thumbnail_size,
+        )
 
     async def yield_file(
         self,
@@ -144,10 +150,11 @@ class ByteStreamer:
         chunk_size: int,
     ):
         """
-        Custom generator that yields the bytes of the media file.
+        Streams Telegram file bytes using bot authentication.
+        Works for all DCs including dc4.
         """
         client = self.client
-        logger.debug(f"Starting to yielding file with client.")
+        logger.debug(f"Starting file yield for file_id={file_id.media_id} on DC {file_id.dc_id}")
         media_session = await self.generate_media_session(client, file_id)
 
         current_part = 1
@@ -164,7 +171,9 @@ class ByteStreamer:
                     chunk = r.bytes
                     if not chunk:
                         break
-                    elif part_count == 1:
+
+                    # Part slicing logic
+                    if part_count == 1:
                         yield chunk[first_part_cut:last_part_cut]
                     elif current_part == 1:
                         yield chunk[first_part_cut:]
@@ -185,15 +194,13 @@ class ByteStreamer:
                         ),
                     )
         except (TimeoutError, AttributeError):
-            pass
+            logger.warning("Stream interrupted during yield_file.")
         finally:
-            logger.debug(f"Finished yielding file with {current_part} parts.")
+            logger.debug(f"Finished yielding file with {current_part-1} parts.")
 
     async def clean_cache(self) -> None:
-        """
-        function to clean the cache to reduce memory usage
-        """
+        """Periodically cleans cached file IDs."""
         while True:
             await asyncio.sleep(self.clean_timer)
             self.cached_file_ids.clear()
-            logger.debug("Cleaned the cache") 
+            logger.debug("Cleaned file_id cache.")
